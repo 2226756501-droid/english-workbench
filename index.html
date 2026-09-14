@@ -86,12 +86,77 @@ audio{width:100%;margin-top:6px}
 .pron-t{color:var(--txt3);font-size:12px;flex:1;min-width:150px}
 .pron-ex{display:inline-block;margin:2px 10px 2px 0;font-size:13px}
 .excn{font-size:12px;color:var(--txt3);margin-top:2px}
+.sync{display:flex;align-items:center;gap:8px;margin:12px 0 2px;padding:9px 12px;background:var(--card);border:1px solid var(--line);border-radius:10px;font-size:13px;color:var(--txt2)}
+.sync .dot{width:8px;height:8px;border-radius:50%;background:#c9c7bf;flex:none}
+.sync .dot.on{background:var(--ok)}
+.sync .dot.warn{background:var(--warn)}
+.sync button{flex:none;margin-left:auto;padding:5px 12px;font-size:13px}
+.mask{display:none;position:fixed;inset:0;background:rgba(28,28,26,.45);z-index:50;align-items:center;justify-content:center;padding:16px}
+.modal{background:var(--card);border-radius:14px;width:100%;max-width:380px;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.18)}
+.mtabs{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
+.mtab{padding:6px 10px;font-size:13px;border-radius:8px;cursor:pointer;color:var(--txt2);background:var(--bg);border:1px solid var(--line)}
+.mtab.on{background:var(--accent-bg);color:var(--accent);border-color:var(--accent-line)}
+.mpane{display:none}
+.mpane.on{display:block}
+.mpane input{width:100%;margin-bottom:8px;box-sizing:border-box}
+.mpane button{width:100%;margin-top:2px}
+.mmsg{font-size:12px;color:var(--warn);min-height:16px;margin-top:6px}
+.mhint{font-size:12px;color:var(--txt3);line-height:1.6;margin-top:10px}
+.mclose{float:right;cursor:pointer;color:var(--txt3);font-size:18px;line-height:1}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>英语开口工作台</h1>
-  <div class="sub">开口 + 雅思 7.0 · 12 个月三阶段 · 输出优先 · 数据保存在本机浏览器</div>
+  <div class="sub">开口 + 雅思 7.0 · 12 个月三阶段 · 输出优先 · 登录后可跨设备同步</div>
+
+  <div class="sync" id="syncbar">
+    <span class="dot" id="sync-dot"></span>
+    <span id="sync-txt">正在检查同步…</span>
+    <button id="sync-btn">登录同步</button>
+  </div>
+
+  <div class="mask" id="auth-mask">
+    <div class="modal">
+      <span class="mclose" id="auth-close">×</span>
+      <div class="mtabs">
+        <span class="mtab on" data-m="pw">密码登录</span>
+        <span class="mtab" data-m="otp">验证码登录</span>
+        <span class="mtab" data-m="up">注册</span>
+        <span class="mtab" data-m="rst">找回密码</span>
+      </div>
+      <div class="mpane on" id="m-pw">
+        <input id="pw-email" type="email" placeholder="邮箱" autocomplete="email">
+        <input id="pw-pass" type="password" placeholder="密码" autocomplete="current-password">
+        <button id="pw-ok">登录</button>
+        <div class="mmsg" id="pw-msg"></div>
+      </div>
+      <div class="mpane" id="m-otp">
+        <input id="otp-email" type="email" placeholder="邮箱" autocomplete="email">
+        <button id="otp-send">发送验证码</button>
+        <input id="otp-code" placeholder="邮件里的 6 位验证码" style="margin-top:8px">
+        <button id="otp-ok">用验证码登录</button>
+        <div class="mmsg" id="otp-msg"></div>
+      </div>
+      <div class="mpane" id="m-up">
+        <input id="up-email" type="email" placeholder="邮箱" autocomplete="email">
+        <input id="up-pass" type="password" placeholder="设一个密码（至少 6 位）" autocomplete="new-password">
+        <button id="up-send">发送验证码</button>
+        <input id="up-code" placeholder="邮件里的 6 位验证码" style="margin-top:8px">
+        <button id="up-ok">注册并登录</button>
+        <div class="mmsg" id="up-msg"></div>
+      </div>
+      <div class="mpane" id="m-rst">
+        <input id="rst-email" type="email" placeholder="注册时用的邮箱" autocomplete="email">
+        <button id="rst-send">发送重置验证码</button>
+        <input id="rst-code" placeholder="邮件里的验证码" style="margin-top:8px">
+        <input id="rst-pass" type="password" placeholder="新密码（至少 6 位）">
+        <button id="rst-ok">重置密码</button>
+        <div class="mmsg" id="rst-msg"></div>
+      </div>
+      <div class="mhint">注册一次，手机和电脑用同一账号登录，打卡记录就自动同步。录音文件较大，仍只存在本地设备。</div>
+    </div>
+  </div>
 
   <div class="stats">
     <div class="stat"><b id="s-streak">0</b><span>连续打卡（天）</span></div>
@@ -384,6 +449,7 @@ audio{width:100%;margin-top:6px}
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
 <script>
 var KEY='speak30_v1';
 var S={startDate:'',days:{},words:[],mastered:{},clips:[],wl:null};
@@ -396,7 +462,7 @@ function load(){
   if(!S.ielts.writings)S.ielts.writings=[];
   if(!S.ielts.mocks)S.ielts.mocks=[];
 }
-function save(){localStorage.setItem(KEY,JSON.stringify(S));}
+function save(){S.updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(S));cloudKick();}
 function $(id){return document.getElementById(id);}
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 
@@ -1107,7 +1173,154 @@ for(var i=0;i<tabs.length;i++){tabs[i].onclick=function(){
 };}
 
 function renderAll(){renderStats();renderToday();renderStage();renderWt();renderMk();renderSents();renderWords();renderDrill();renderRecs();renderCal();renderPhon();renderPho();}
-load();renderAll();
+/* ---------- 云同步（跨设备） ---------- */
+var CLOUD_ENDPOINT='https://english-workbench-31545.app.workbuddy.host';
+var CLOUD_PKEY='wbpk_4iHBYyeUFZEE268twUwZcH_fKo2cYJCD8MEbwear4AUFoBV7nwABFBd';
+var CL={ok:false,c:null,user:null,rowId:null,status:'init',timer:null,busy:false,pending:null};
+function syncTxt(t,cls){var a=$('sync-txt'),b=$('sync-dot');if(a)a.textContent=t;if(b)b.className='dot '+(cls||'');}
+function cloudInit(){
+  if(typeof WorkBuddyCloud==='undefined'){CL.status='nosdk';syncTxt('同步不可用：SDK 未加载，数据仅存本机','');return false;}
+  if(CL.ok)return true;
+  try{CL.c=WorkBuddyCloud.createWorkBuddyCloud({endpoint:CLOUD_ENDPOINT,publishableKey:CLOUD_PKEY});CL.ok=true;return true;}
+  catch(e){CL.status='nosdk';syncTxt('同步不可用，数据仅存本机','');return false;}
+}
+async function cloudBoot(){
+  if(!cloudInit())return;
+  try{
+    var r=await CL.c.auth.getSession();
+    var s=r&&!r.error&&r.data;
+    if(s&&(s.user||s.access_token)){await finishAuth();}
+    else{CL.status='off';syncTxt('未登录 · 数据只存在这台设备','');var b=$('sync-btn');if(b)b.textContent='登录同步';}
+  }catch(e){
+    CL.status='bad';syncTxt('同步不可用（需从应用网址打开）· 数据仅存本机','');
+    var b2=$('sync-btn');if(b2)b2.style.display='none';
+  }
+}
+async function finishAuth(){
+  try{var g=await CL.c.auth.getUser();CL.user=(g&&g.data&&(g.data.user||g.data))||null;}catch(e){}
+  CL.status='on';
+  var mail=(CL.user&&CL.user.email)||'已登录';
+  syncTxt('已同步 · '+mail,'on');
+  var b=$('sync-btn');if(b)b.textContent='退出';
+  await cloudPull();
+}
+async function cloudPull(){
+  if(!CL.ok||!CL.user)return;
+  try{
+    var r=await CL.c.database.from('workbench_state').select('id,data,updated_at').limit(1);
+    if(r&&r.error)throw r.error;
+    var rows=(r&&r.data)||[];
+    if(rows.length){
+      var row=rows[0];CL.rowId=row.id;
+      var rt=new Date(row.updated_at).getTime();
+      var lt=S.updatedAt||0;
+      if(rt>lt+1500){
+        CL.busy=true;
+        S=Object.assign({startDate:'',days:{},words:[],mastered:{},clips:[],wl:null,updatedAt:rt},row.data||{});
+        localStorage.setItem(KEY,JSON.stringify(S));
+        CL.busy=false;renderAll();
+        syncTxt('已从云端拉取最新记录','on');
+      }
+    }else{await cloudPush();}
+  }catch(e){syncTxt('同步出错，改动已存本机','warn');}
+}
+async function cloudPush(){
+  if(!CL.ok||!CL.user||CL.busy)return;
+  try{
+    var r;
+    if(CL.rowId){r=await CL.c.database.from('workbench_state').update({data:S,updated_at:new Date().toISOString()}).eq('id',CL.rowId).select();}
+    else{r=await CL.c.database.from('workbench_state').insert({data:S}).select();}
+    if(r&&r.error)throw r.error;
+    if(r&&r.data&&r.data[0]&&r.data[0].id)CL.rowId=r.data[0].id;
+    syncTxt('已同步 · '+((CL.user&&CL.user.email)||''),'on');
+  }catch(e){syncTxt('同步失败，改动已存本机','warn');}
+}
+function cloudKick(){if(CL.status!=='on')return;clearTimeout(CL.timer);CL.timer=setTimeout(cloudPush,2000);}
+function mmsg(id,t){var e=$(id);if(e)e.textContent=t;}
+function openAuth(){$('auth-mask').style.display='flex';}
+function closeAuth(){$('auth-mask').style.display='none';}
+$('auth-close').onclick=closeAuth;
+$('auth-mask').onclick=function(e){if(e.target===this)closeAuth();};
+(function(){
+  var ts=document.querySelectorAll('.mtab');
+  for(var i=0;i<ts.length;i++){ts[i].onclick=function(){
+    for(var j=0;j<ts.length;j++)ts[j].classList.remove('on');
+    this.classList.add('on');
+    var ps=document.querySelectorAll('.mpane');
+    for(var k=0;k<ps.length;k++)ps[k].classList.remove('on');
+    $('m-'+this.dataset.m).classList.add('on');
+  };}
+})();
+$('sync-btn').onclick=async function(){
+  if(CL.status==='on'){
+    try{await CL.c.auth.signOut();}catch(e){}
+    CL.user=null;CL.rowId=null;CL.status='off';
+    syncTxt('已退出 · 数据留在这台设备','');this.textContent='登录同步';return;
+  }
+  if(!cloudInit()){syncTxt('同步不可用，数据仅存本机','');return;}
+  openAuth();
+};
+$('pw-ok').onclick=async function(){
+  var email=$('pw-email').value.trim(),pass=$('pw-pass').value;
+  if(!email||!pass){mmsg('pw-msg','邮箱和密码都要填');return;}
+  if(!cloudInit())return;
+  var r=await CL.c.auth.signInWithPassword({email:email,password:pass});
+  if(r&&r.error){mmsg('pw-msg','邮箱或密码不对');return;}
+  await finishAuth();closeAuth();
+};
+$('otp-send').onclick=async function(){
+  var email=$('otp-email').value.trim();
+  if(!email){mmsg('otp-msg','先填邮箱');return;}
+  if(!cloudInit())return;
+  var r=await CL.c.auth.sendOtp({email:email});
+  if(r&&r.error){mmsg('otp-msg','发送失败：'+(r.error.message||'请稍后再试'));return;}
+  CL.pending={vid:r.data.verificationId,email:email,ex:r.data.isExistingUser};
+  mmsg('otp-msg','验证码已发到邮箱，查收后填进来');
+};
+$('otp-ok').onclick=async function(){
+  if(!CL.pending){mmsg('otp-msg','先点发送验证码');return;}
+  var code=$('otp-code').value.trim();
+  if(!code){mmsg('otp-msg','填验证码');return;}
+  var r=await CL.c.auth.verifyOtp({verificationId:CL.pending.vid,token:code,email:CL.pending.email,isExistingUser:CL.pending.ex});
+  if(r&&r.error){mmsg('otp-msg','验证码不对或已过期');return;}
+  await finishAuth();closeAuth();
+};
+$('up-send').onclick=async function(){
+  var email=$('up-email').value.trim(),pass=$('up-pass').value;
+  if(!email||pass.length<6){mmsg('up-msg','邮箱要填，密码至少 6 位');return;}
+  if(!cloudInit())return;
+  var r=await CL.c.auth.sendOtp({email:email});
+  if(r&&r.error){mmsg('up-msg','发送失败：'+(r.error.message||'请稍后再试'));return;}
+  if(r.data.isExistingUser){mmsg('up-msg','这个邮箱已注册过，请改用「密码登录」或「验证码登录」');return;}
+  CL.pending={vid:r.data.verificationId,email:email,ex:false,pass:pass};
+  mmsg('up-msg','验证码已发到邮箱，填进来后点注册');
+};
+$('up-ok').onclick=async function(){
+  if(!CL.pending||!CL.pending.pass){mmsg('up-msg','先点发送验证码');return;}
+  var code=$('up-code').value.trim();
+  if(!code){mmsg('up-msg','填验证码');return;}
+  var r=await CL.c.auth.verifyOtp({verificationId:CL.pending.vid,token:code,email:CL.pending.email,isExistingUser:false,password:CL.pending.pass});
+  if(r&&r.error){mmsg('up-msg','验证码不对或已过期');return;}
+  await finishAuth();closeAuth();
+};
+$('rst-send').onclick=async function(){
+  var email=$('rst-email').value.trim();
+  if(!email){mmsg('rst-msg','先填邮箱');return;}
+  if(!cloudInit())return;
+  var r=await CL.c.auth.resetPasswordForEmail(email);
+  if(r&&r.error){mmsg('rst-msg','发送失败：'+(r.error.message||'请稍后再试'));return;}
+  CL.pending={rst:r.data};
+  mmsg('rst-msg','验证码已发出，填进来并设新密码');
+};
+$('rst-ok').onclick=async function(){
+  if(!CL.pending||!CL.pending.rst){mmsg('rst-msg','先点发送验证码');return;}
+  var code=$('rst-code').value.trim(),pass=$('rst-pass').value;
+  if(!code||pass.length<6){mmsg('rst-msg','验证码要填，新密码至少 6 位');return;}
+  var r=await CL.pending.rst.updateUser({nonce:code,password:pass});
+  if(r&&r.error){mmsg('rst-msg','重置失败：'+(r.error.message||'请重试'));return;}
+  await finishAuth();closeAuth();
+};
+load();renderAll();cloudBoot();
 </script>
 </body>
 </html>
