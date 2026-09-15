@@ -421,7 +421,11 @@ audio{width:100%;margin-top:6px}
         <button class="rec" id="rec-go">开始录音</button>
         <button id="rec-stop" disabled>停止</button>
       </div>
-      <div class="note" id="rec-tip">录音存在本机浏览器（IndexedDB），不上传任何地方。</div>
+      <div class="note" id="rec-tip">录音存在本机浏览器（IndexedDB），不上传任何地方。清缓存、换浏览器会丢，重要录音点「下载」保存。</div>
+      <div class="row" style="margin-top:8px">
+        <span class="kv" id="rec-dir" style="flex:1">保存位置：浏览器内（占 C 盘）</span>
+        <button id="rec-pick">存到文件夹</button>
+      </div>
     </div>
     <div class="card">
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">我的录音</h2><span class="pill" id="rec-count">0 条</span></div>
@@ -449,7 +453,7 @@ audio{width:100%;margin-top:6px}
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js" onerror="window.__SDK1=false"></script>
 <script>
 var KEY='speak30_v1';
 var S={startDate:'',days:{},words:[],mastered:{},clips:[],wl:null};
@@ -877,8 +881,8 @@ var DB=null;
 function idb(){
   return new Promise(function(res,rej){
     if(DB)return res(DB);
-    var r=indexedDB.open('speak30',1);
-    r.onupgradeneeded=function(){r.result.createObjectStore('clips',{keyPath:'id'});};
+    var r=indexedDB.open('speak30',2);
+    r.onupgradeneeded=function(){var db=r.result;if(!db.objectStoreNames.contains('clips')){db.createObjectStore('clips',{keyPath:'id'});}if(!db.objectStoreNames.contains('conf')){db.createObjectStore('conf',{keyPath:'k'});}};
     r.onsuccess=function(){DB=r.result;res(DB);};
     r.onerror=function(){rej(r.error);};
   });
@@ -893,6 +897,49 @@ function delClip(id){return idb().then(function(db){return new Promise(function(
   var t=db.transaction('clips','readwrite');t.objectStore('clips').delete(id);t.oncomplete=res;t.onerror=res;
 });});}
 
+function putConf(k,v){return idb().then(function(db){return new Promise(function(res,rej){
+  var t=db.transaction('conf','readwrite');t.objectStore('conf').put({k:k,v:v});t.oncomplete=res;t.onerror=function(){rej(t.error);};
+});});}
+function getConf(k){return idb().then(function(db){return new Promise(function(res){
+  var t=db.transaction('conf','readonly'),q=t.objectStore('conf').get(k);q.onsuccess=function(){res(q.result?q.result.v:null);};q.onerror=function(){res(null);};
+});});}
+
+var DIR=null,PENDING=null;
+function dirLabel(t,warn){var e=$('rec-dir');if(e){e.textContent=t;e.style.color=warn?'#A32D2D':'';}}
+function dirOK(){return !!(window.showDirectoryPicker);}
+async function dirLoad(){
+  if(!dirOK()){dirLabel('这个浏览器不支持直接存文件夹，用「下载」备份');return;}
+  try{
+    var h=await getConf('dir');
+    if(!h)return;
+    var p=await h.queryPermission({mode:'readwrite'});
+    if(p==='granted'){DIR=h;dirLabel('保存位置：'+h.name+'（直接写入，C 盘不留副本）');}
+    else{PENDING=h;dirLabel('已选「'+h.name+'」，点「存到文件夹」恢复授权',true);}
+  }catch(e){}
+}
+async function dirPick(){
+  if(!dirOK()){dirLabel('这个浏览器不支持直接存文件夹，用「下载」备份',true);return;}
+  try{
+    var h=PENDING||await window.showDirectoryPicker({id:'rec',mode:'readwrite'});
+    var p=await h.queryPermission({mode:'readwrite'});
+    if(p!=='granted'){p=await h.requestPermission({mode:'readwrite'});}
+    if(p!=='granted'){dirLabel('授权没通过，仍存浏览器内',true);return;}
+    DIR=h;PENDING=null;await putConf('dir',h);
+    dirLabel('保存位置：'+h.name+'（直接写入，C 盘不留副本）');
+  }catch(e){dirLabel('没选文件夹，仍存浏览器内');}
+}
+async function saveToDir(blob,name){
+  var fh=await DIR.getFileHandle(name,{create:true});
+  var w=await fh.createWritable();await w.write(blob);await w.close();
+  return name;
+}
+
+function keepLocal(blob,meta){
+  putClip(meta.id,blob).then(function(){
+    S.clips.unshift(meta);save();renderRecs();renderStats();
+    $('rec-tip').textContent='已存本机（IndexedDB），记得点「下载」备份。';
+  });
+}
 var rec=null,chunks=[],t0=0;
 $('rec-go').onclick=function(){
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){$('rec-tip').textContent='这个环境不支持录音，请用手机录音后手动记录。';return;}
@@ -901,11 +948,16 @@ $('rec-go').onclick=function(){
     rec.ondataavailable=function(e){chunks.push(e.data);};
     rec.onstop=function(){
       var blob=new Blob(chunks,{type:'audio/webm'}),id=Date.now();
-      putClip(id,blob).then(function(){
-        S.clips.unshift({id:id,date:today(),q:$('rec-q').value.trim(),dur:Math.round((Date.now()-t0)/1000)});
-        save();renderRecs();renderStats();
-      });
+      var meta={id:id,date:today(),q:$('rec-q').value.trim(),dur:Math.round((Date.now()-t0)/1000)};
       st.getTracks().forEach(function(x){x.stop();});
+      if(DIR){
+        var nm=clipName(meta);
+        saveToDir(blob,nm).then(function(){
+          meta.saved=true;meta.file=nm;
+          S.clips.unshift(meta);save();renderRecs();renderStats();
+          $('rec-tip').textContent='已直接存到 '+DIR.name+' → '+nm;
+        }).catch(function(){keepLocal(blob,meta);});
+      }else{keepLocal(blob,meta);}
     };
     rec.start();
     $('rec-go').disabled=true;$('rec-stop').disabled=false;
@@ -914,8 +966,10 @@ $('rec-go').onclick=function(){
 };
 $('rec-stop').onclick=function(){
   if(rec&&rec.state!=='inactive'){rec.stop();}
-  $('rec-go').disabled=false;$('rec-stop').disabled=true;$('rec-tip').textContent='录音存在本机浏览器（IndexedDB），不上传任何地方。';
+  $('rec-go').disabled=false;$('rec-stop').disabled=true;$('rec-tip').textContent='录音已存本机（IndexedDB），不上传。重要录音记得点「下载」备份。';
 };
+function clipName(c){return '录音_'+((c&&c.date)||'未标日期')+'_'+(((c&&c.dur)||0)+'s')+'.webm';}
+function findClip(id){for(var n=0;n<S.clips.length;n++){if(S.clips[n].id===id)return S.clips[n];}return null;}
 function renderRecs(){
   $('rec-count').textContent=S.clips.length+' 条';
   if(!S.clips.length){$('rec-list').innerHTML='<div class="empty">还没有录音</div>';return;}
@@ -923,12 +977,12 @@ function renderRecs(){
   S.clips.forEach(function(c){
     h+='<div class="card" style="margin-bottom:10px;padding:12px 14px">'
       +'<div class="row" style="justify-content:space-between"><b style="font-size:13px">'+esc(c.date)+' · '+(c.dur||0)+' 秒</b>'
-      +'<button data-cid="'+c.id+'" class="danger">删除</button></div>'
+      +((c.arch||c.saved)?'<button data-cid="'+c.id+'" class="danger">删除</button>':'<button data-did="'+c.id+'">下载</button> <button data-xid="'+c.id+'">下载并清除</button> <button data-cid="'+c.id+'" class="danger">删除</button>')+'</div>'
       +(c.q?'<div class="kv">题目：'+esc(c.q)+'</div>':'')
-      +'<audio controls data-aid="'+c.id+'"></audio></div>';
+      +(c.arch?'<div class="kv">音频已备份，本机副本已清除</div>':(c.saved?'<div class="kv">已存到文件夹：'+esc(c.file||'')+'</div>':'<audio controls data-aid="'+c.id+'"></audio>'))+'</div>';
   });
   $('rec-list').innerHTML=h;
-  S.clips.forEach(function(c){getClip(c.id).then(function(b){
+  S.clips.filter(function(c){return !c.arch&&!c.saved;}).forEach(function(c){getClip(c.id).then(function(b){
     if(!b)return;var a=document.querySelector('audio[data-aid="'+c.id+'"]');
     if(a){a.src=URL.createObjectURL(b);}
   });});
@@ -936,6 +990,35 @@ function renderRecs(){
   for(var i=0;i<ds.length;i++){ds[i].onclick=function(){
     var id=+this.dataset.cid;delClip(id).then(function(){
       S.clips=S.clips.filter(function(x){return x.id!==id;});save();renderRecs();renderStats();
+    });
+  };}
+  var dls=document.querySelectorAll('#rec-list button[data-did]');
+  for(var j=0;j<dls.length;j++){dls[j].onclick=function(){
+    var cid=+this.dataset.did;
+    getClip(cid).then(function(b){
+      if(!b){$('rec-tip').textContent='这条录音的音频已不在本机，可能缓存被清过。';return;}
+      var u=URL.createObjectURL(b),a=document.createElement('a');
+      a.href=u;a.download=clipName(findClip(cid));document.body.appendChild(a);a.click();a.remove();
+      setTimeout(function(){URL.revokeObjectURL(u);},5000);
+      $('rec-tip').textContent='已下载到浏览器的下载目录。';
+    });
+  };}
+  var xls=document.querySelectorAll('#rec-list button[data-xid]');
+  for(var k=0;k<xls.length;k++){xls[k].onclick=function(){
+    var xid=+this.dataset.xid;
+    getClip(xid).then(function(b){
+      if(!b){$('rec-tip').textContent='音频已不在本机，可能缓存被清过。';return;}
+      var u=URL.createObjectURL(b),a=document.createElement('a');
+      a.href=u;a.download=clipName(findClip(xid));document.body.appendChild(a);a.click();a.remove();
+      $('rec-tip').textContent='已保存到下载目录，正在清除本机副本……';
+      setTimeout(function(){
+        URL.revokeObjectURL(u);
+        delClip(xid).then(function(){
+          for(var n=0;n<S.clips.length;n++){if(S.clips[n].id===xid)S.clips[n].arch=true;}
+          save();renderRecs();
+          $('rec-tip').textContent='已备份，本机音频已清除（记录保留）。';
+        });
+      },2000);
     });
   };}
 }
@@ -1178,6 +1261,21 @@ var CLOUD_ENDPOINT='https://english-workbench-31545.app.workbuddy.host';
 var CLOUD_PKEY='wbpk_4iHBYyeUFZEE268twUwZcH_fKo2cYJCD8MEbwear4AUFoBV7nwABFBd';
 var CL={ok:false,c:null,user:null,rowId:null,status:'init',timer:null,busy:false,pending:null};
 function syncTxt(t,cls){var a=$('sync-txt'),b=$('sync-dot');if(a)a.textContent=t;if(b)b.className='dot '+(cls||'');}
+function netMsg(e){var m=(e&&e.message)||String(e||'');if(/fetch|network|timeout|NetworkError|Failed to/i.test(m))return '网络请求失败，连不上服务器';return m.slice(0,80)||'未知错误';}
+function hostOK(){try{return location.hostname==='english-workbench-31545.app.workbuddy.host';}catch(e){return false;}}
+async function ccall(fn){try{return await fn();}catch(e){return {error:{message:netMsg(e)}};}}
+function sdkFail(){CL.status='bad';syncTxt('同步不可用：连不上云，数据仅存本机','');var b=$('sync-btn');if(b)b.style.display='none';}
+function bootCloud(){
+  if(typeof WorkBuddyCloud!=='undefined'){cloudBoot();return;}
+  if(window.__SDK1===false){
+    var s=document.createElement('script');
+    s.src='https://unpkg.com/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js';
+    s.onload=function(){cloudBoot();};
+    s.onerror=sdkFail;
+    document.head.appendChild(s);return;
+  }
+  sdkFail();
+}
 function cloudInit(){
   if(typeof WorkBuddyCloud==='undefined'){CL.status='nosdk';syncTxt('同步不可用：SDK 未加载，数据仅存本机','');return false;}
   if(CL.ok)return true;
@@ -1192,7 +1290,8 @@ async function cloudBoot(){
     if(s&&(s.user||s.access_token)){await finishAuth();}
     else{CL.status='off';syncTxt('未登录 · 数据只存在这台设备','');var b=$('sync-btn');if(b)b.textContent='登录同步';}
   }catch(e){
-    CL.status='bad';syncTxt('同步不可用（需从应用网址打开）· 数据仅存本机','');
+    CL.status='bad';
+    syncTxt(hostOK()?('同步不可用：'+netMsg(e)+' · 数据仅存本机'):'同步不可用：请用应用网址打开 · 数据仅存本机','');
     var b2=$('sync-btn');if(b2)b2.style.display='none';
   }
 }
@@ -1237,7 +1336,10 @@ async function cloudPush(){
 }
 function cloudKick(){if(CL.status!=='on')return;clearTimeout(CL.timer);CL.timer=setTimeout(cloudPush,2000);}
 function mmsg(id,t){var e=$(id);if(e)e.textContent=t;}
-function openAuth(){$('auth-mask').style.display='flex';}
+function openAuth(){
+  if(!hostOK()){syncTxt('这个网址不能同步，请用应用网址打开','warn');return;}
+  $('auth-mask').style.display='flex';
+}
 function closeAuth(){$('auth-mask').style.display='none';}
 $('auth-close').onclick=closeAuth;
 $('auth-mask').onclick=function(e){if(e.target===this)closeAuth();};
@@ -1264,7 +1366,7 @@ $('pw-ok').onclick=async function(){
   var email=$('pw-email').value.trim(),pass=$('pw-pass').value;
   if(!email||!pass){mmsg('pw-msg','邮箱和密码都要填');return;}
   if(!cloudInit())return;
-  var r=await CL.c.auth.signInWithPassword({email:email,password:pass});
+  var r=await ccall(function(){return CL.c.auth.signInWithPassword({email:email,password:pass});});
   if(r&&r.error){mmsg('pw-msg','邮箱或密码不对');return;}
   await finishAuth();closeAuth();
 };
@@ -1272,7 +1374,7 @@ $('otp-send').onclick=async function(){
   var email=$('otp-email').value.trim();
   if(!email){mmsg('otp-msg','先填邮箱');return;}
   if(!cloudInit())return;
-  var r=await CL.c.auth.sendOtp({email:email});
+  var r=await ccall(function(){return CL.c.auth.sendOtp({email:email});});
   if(r&&r.error){mmsg('otp-msg','发送失败：'+(r.error.message||'请稍后再试'));return;}
   CL.pending={vid:r.data.verificationId,email:email,ex:r.data.isExistingUser};
   mmsg('otp-msg','验证码已发到邮箱，查收后填进来');
@@ -1281,7 +1383,7 @@ $('otp-ok').onclick=async function(){
   if(!CL.pending){mmsg('otp-msg','先点发送验证码');return;}
   var code=$('otp-code').value.trim();
   if(!code){mmsg('otp-msg','填验证码');return;}
-  var r=await CL.c.auth.verifyOtp({verificationId:CL.pending.vid,token:code,email:CL.pending.email,isExistingUser:CL.pending.ex});
+  var r=await ccall(function(){return CL.c.auth.verifyOtp({verificationId:CL.pending.vid,token:code,email:CL.pending.email,isExistingUser:CL.pending.ex});});
   if(r&&r.error){mmsg('otp-msg','验证码不对或已过期');return;}
   await finishAuth();closeAuth();
 };
@@ -1289,7 +1391,7 @@ $('up-send').onclick=async function(){
   var email=$('up-email').value.trim(),pass=$('up-pass').value;
   if(!email||pass.length<6){mmsg('up-msg','邮箱要填，密码至少 6 位');return;}
   if(!cloudInit())return;
-  var r=await CL.c.auth.sendOtp({email:email});
+  var r=await ccall(function(){return CL.c.auth.sendOtp({email:email});});
   if(r&&r.error){mmsg('up-msg','发送失败：'+(r.error.message||'请稍后再试'));return;}
   if(r.data.isExistingUser){mmsg('up-msg','这个邮箱已注册过，请改用「密码登录」或「验证码登录」');return;}
   CL.pending={vid:r.data.verificationId,email:email,ex:false,pass:pass};
@@ -1299,7 +1401,7 @@ $('up-ok').onclick=async function(){
   if(!CL.pending||!CL.pending.pass){mmsg('up-msg','先点发送验证码');return;}
   var code=$('up-code').value.trim();
   if(!code){mmsg('up-msg','填验证码');return;}
-  var r=await CL.c.auth.verifyOtp({verificationId:CL.pending.vid,token:code,email:CL.pending.email,isExistingUser:false,password:CL.pending.pass});
+  var r=await ccall(function(){return CL.c.auth.verifyOtp({verificationId:CL.pending.vid,token:code,email:CL.pending.email,isExistingUser:false,password:CL.pending.pass});});
   if(r&&r.error){mmsg('up-msg','验证码不对或已过期');return;}
   await finishAuth();closeAuth();
 };
@@ -1307,7 +1409,7 @@ $('rst-send').onclick=async function(){
   var email=$('rst-email').value.trim();
   if(!email){mmsg('rst-msg','先填邮箱');return;}
   if(!cloudInit())return;
-  var r=await CL.c.auth.resetPasswordForEmail(email);
+  var r=await ccall(function(){return CL.c.auth.resetPasswordForEmail(email);});
   if(r&&r.error){mmsg('rst-msg','发送失败：'+(r.error.message||'请稍后再试'));return;}
   CL.pending={rst:r.data};
   mmsg('rst-msg','验证码已发出，填进来并设新密码');
@@ -1316,11 +1418,12 @@ $('rst-ok').onclick=async function(){
   if(!CL.pending||!CL.pending.rst){mmsg('rst-msg','先点发送验证码');return;}
   var code=$('rst-code').value.trim(),pass=$('rst-pass').value;
   if(!code||pass.length<6){mmsg('rst-msg','验证码要填，新密码至少 6 位');return;}
-  var r=await CL.pending.rst.updateUser({nonce:code,password:pass});
+  var r=await ccall(function(){return CL.pending.rst.updateUser({nonce:code,password:pass});});
   if(r&&r.error){mmsg('rst-msg','重置失败：'+(r.error.message||'请重试'));return;}
   await finishAuth();closeAuth();
 };
-load();renderAll();cloudBoot();
+load();renderAll();bootCloud();dirLoad();
+$('rec-pick').onclick=dirPick;
 </script>
 </body>
 </html>
