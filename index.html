@@ -58,6 +58,14 @@ textarea{min-height:58px;resize:vertical}
 .sent .cn{font-size:12px;color:var(--txt3);margin-top:1px}
 .sent.hide .en{color:transparent;background:var(--line);border-radius:3px}
 .sent.mastered .en{color:var(--ok)}
+.tk{cursor:pointer;border-bottom:1px dashed var(--line2);border-radius:2px}
+.tk:hover{background:#eeece7}
+.tk.marked{border-bottom:1px solid var(--warn);color:var(--warn)}
+.tkbox{display:inline}
+.tkcard{background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:8px 10px;margin:5px 0 2px;font-size:12px;line-height:1.65;font-style:normal}
+.tkcard b{font-size:13px}
+.tkcard .sub2{color:var(--txt3);font-size:11px}
+.tkcard button{margin-top:6px}
 .spk{flex:none;font-size:12px;padding:3px 10px}
 .spk.on{background:var(--accent);border-color:var(--accent);color:#fff}
 @media(max-width:560px){
@@ -375,7 +383,7 @@ audio{width:100%;margin-top:6px}
         <input type="text" id="wl-kw" placeholder="搜英文或中文" style="flex:1;min-width:150px">
         <button class="pri" id="wl-draw">随机抽 12 个</button>
       </div>
-      <div class="note">按 CEFR 分级，取自 Oxford 5000 词表 + ECDICT 开源词典，每个词带音标、中文释义和真实例句。<b>挑词加进上面的词表，不要整册背。</b></div>
+      <div class="note">按 CEFR 分级，取自 Oxford 5000 词表 + ECDICT 开源词典，每个词带音标、中文释义和真实例句。<b>挑词加进上面的词表，不要整册背。</b><br><b>例句里每个词都能点</b>：点一下会弹出这个词的意思，可以顺手加进生词本，例句会自动跟进去；已经加过的词在句子里显示为橙色。</div>
       <div id="wl-list" style="margin-top:8px"></div>
     </div>
   </div>
@@ -659,13 +667,14 @@ function renderSents(){
       tot++;if(m){got++;n++;}
       h+='<div class="sent'+(m?' mastered':'')+'" data-id="'+id+'">'
         +'<input type="checkbox"'+(m?' checked':'')+' style="margin-top:4px;accent-color:var(--accent);cursor:pointer">'
-        +'<div style="flex:1"><div class="en">'+esc(list[i][0])+'</div><div class="cn">'+esc(list[i][1])+'</div></div>'+spk(list[i][0])+'</div>';
+        +'<div style="flex:1"><div class="en">'+renderSentence(list[i][0])+'</div><div class="cn">'+esc(list[i][1])+'</div></div>'+spk(list[i][0])+'</div>';
     }
     h+='<div class="kv" style="margin-bottom:6px">'+n+' / '+list.length+' 已掌握</div>';
   }
   $('sent-list').innerHTML=h;
   $('sent-prog').textContent=got+' / '+tot;
   bindSpeak($('sent-list'));
+  bindTk($('sent-list'));
   var es=document.querySelectorAll('#sent-list .sent input');
   for(var k=0;k<es.length;k++){es[k].onchange=function(){
     var id=this.parentNode.dataset.id;S.mastered[id]=this.checked;save();renderSents();
@@ -710,14 +719,105 @@ function renderDrill(){
   var idx=Math.min(w.i,WORDS.length-1),x=WORDS[idx];
   $('drill').innerHTML='<div class="qbox"><div class="q">'+esc(x[0])+' '+spk(x[0])+'</div>'
     +'<div class="h">'+esc(x[1])+(x[2]?' &nbsp;/'+esc(x[2])+'/':'')+'</div>'
-    +'<div id="dr-cn" style="display:none;margin-top:9px;font-size:13px;color:var(--txt)">'+esc(x[3]||'')+(x[4]?'<div class="note" style="font-style:italic">'+esc(x[4])+' '+spk(x[4])+'</div>':'')+(x[5]?'<div class="excn">'+esc(x[5])+'</div>':'')+'</div>'
+    +'<div id="dr-cn" style="display:none;margin-top:9px;font-size:13px;color:var(--txt)">'+esc(x[3]||'')+(x[4]?'<div class="note" style="font-style:italic">'+renderSentence(x[4])+' '+spk(x[4])+'</div>':'')+(x[5]?'<div class="excn">'+esc(x[5])+'</div>':'')+'</div>'
     +'<div class="row" style="margin-top:10px"><button id="dr-show">显示释义</button>'
     +'<button id="dr-ok" class="pri">认识</button>'
     +'<button id="dr-no">不熟</button></div></div>';
   bindSpeak($('drill'));
+  bindTk($('drill'));
   $('dr-show').onclick=function(){$('dr-cn').style.display='block';};
   $('dr-ok').onclick=function(){drillNext(true);};
   $('dr-no').onclick=function(){drillNext(false);};
+}
+
+/* ---------- 例句里点单词查义 ---------- */
+var WLIX=null;
+function wlIndex(){
+  if(WLIX)return WLIX;
+  WLIX={};
+  for(var i=0;i<WORDS.length;i++){var x=WORDS[i],k=String(x[0]).toLowerCase();if(!WLIX[k])WLIX[k]=x;}
+  return WLIX;
+}
+function lookupWord(raw){
+  var k=String(raw||'').toLowerCase().replace(/[^a-z'-]/g,'');
+  if(!k)return null;
+  var ix=wlIndex();
+  if(ix[k])return ix[k];
+  var t=[];
+  if(/ies$/.test(k))t.push(k.slice(0,-3)+'y');
+  if(/(ches|shes|sses|xes|zes)$/.test(k))t.push(k.slice(0,-2));
+  if(/s$/.test(k))t.push(k.slice(0,-1));
+  if(/ied$/.test(k))t.push(k.slice(0,-3)+'y');
+  if(/ed$/.test(k)){var d=k.slice(0,-2);t.push(d,k.slice(0,-1));if(/([bcdfghjklmnpqrstvwxyz])\1$/.test(d))t.push(d.slice(0,-1));}
+  if(/ing$/.test(k)){var g=k.slice(0,-3);t.push(g,g+'e');if(/([bcdfghjklmnpqrstvwxyz])\1$/.test(g))t.push(g.slice(0,-1));}
+  if(/est$/.test(k)){var s2=k.slice(0,-3);t.push(s2,k.slice(0,-2));if(/([bcdfghjklmnpqrstvwxyz])\1$/.test(s2))t.push(s2.slice(0,-1));}
+  if(/er$/.test(k)){var e1=k.slice(0,-2);t.push(e1,k.slice(0,-1));if(/([bcdfghjklmnpqrstvwxyz])\1$/.test(e1))t.push(e1.slice(0,-1));}
+  if(/ily$/.test(k))t.push(k.slice(0,-3)+'y');
+  if(/ly$/.test(k))t.push(k.slice(0,-2));
+  if(/n't$/.test(k))t.push(k.replace(/n't$/,''));
+  for(var j=0;j<t.length;j++){if(ix[t[j]])return ix[t[j]];}
+  var IRR={went:'go',gone:'go',children:'child',feet:'foot',teeth:'tooth',men:'man',women:'woman',mice:'mouse',people:'person',better:'good',best:'good',worse:'bad',worst:'bad',did:'do',does:'do',done:'do',doing:'do',had:'have',has:'have',having:'have',said:'say',saw:'see',seen:'see',seeing:'see',took:'take',taken:'take',came:'come',made:'make',making:'make',got:'get',getting:'get',knew:'know',known:'know',thought:'think',found:'find',told:'tell',taught:'teach',brought:'bring',bought:'buy',caught:'catch',paid:'pay',ran:'run',ringing:'ring',sang:'sing',sung:'sing',sat:'sit',slept:'sleep',spoke:'speak',spoken:'speak',stood:'stand',swam:'swim',wrote:'write',written:'write',am:'be','is':'be',are:'be',was:'be',were:'be',been:'be',being:'be',could:'can',would:'will',should:'shall',much:'many',further:'far',furthest:'far',elder:'old',eldest:'old'};
+  if(IRR[k]&&ix[IRR[k]])return ix[IRR[k]];
+  return null;
+}
+function hasWordNote(w){
+  var k=String(w).toLowerCase();
+  for(var i=0;i<S.words.length;i++){if(String(S.words[i].en).toLowerCase()===k)return true;}
+  return false;
+}
+function renderSentence(s){
+  if(!s)return '';
+  var ps=String(s).split(/([A-Za-z][A-Za-z'-]*)/),h='';
+  for(var i=0;i<ps.length;i++){
+    var p=ps[i];if(!p)continue;
+    if(/^[A-Za-z][A-Za-z'-]*$/.test(p))h+='<span class="tk'+(hasWordNote(p)?' marked':'')+'" data-tk="'+esc(p)+'">'+esc(p)+'</span>';
+    else h+=esc(p);
+  }
+  return h?'<span class="tkbox">'+h+'</span>':'';
+}
+function tkMarkAll(host,w){
+  if(!host)return;
+  var ts=host.querySelectorAll('.tk');
+  for(var i=0;i<ts.length;i++){if(String(ts[i].dataset.tk).toLowerCase()===w.toLowerCase())ts[i].className='tk marked';}
+}
+function bindTk(root){
+  if(!root||root.__tkb)return;
+  root.__tkb=1;
+  root.addEventListener('click',function(e){
+    var el=e.target;
+    while(el&&el!==root&&!(el.dataset&&el.dataset.addtk))el=el.parentNode;
+    if(el&&el!==root&&el.dataset&&el.dataset.addtk){
+      var w=el.dataset.addtk;
+      if(!hasWordNote(w)){
+        S.words.unshift({id:Date.now(),en:w,cn:el.dataset.tkcn||'',ex:el.dataset.tkex||''});
+        save();renderWords();
+      }
+      el.textContent='已在生词本';el.disabled=true;
+      tkMarkAll(root,w);
+      return;
+    }
+    var n=e.target,tk=null;
+    while(n&&n!==root){if(n.dataset&&n.dataset.tk){tk=n;break;}n=n.parentNode;}
+    if(!tk)return;
+    var box=tk.parentNode;
+    while(box&&!box.classList.contains('tkbox')&&box!==root)box=box.parentNode;
+    var host=root,olds=host.querySelectorAll('.tkcard');
+    for(var i=0;i<olds.length;i++)olds[i].parentNode.removeChild(olds[i]);
+    var sent=box?String(box.textContent).replace(/\s+/g,' ').trim():'';
+    var wd=tk.dataset.tk,r=lookupWord(wd),card=document.createElement('div');
+    card.className='tkcard';
+    if(!r){
+      card.innerHTML='<b>'+esc(wd)+'</b> <span class="sub2">这个词不在分级词库里</span>'
+        +'<br><button data-addtk="'+esc(wd)+'" data-tkex="'+esc(sent)+'"'+(hasWordNote(wd)?' disabled':'')+'>'+(hasWordNote(wd)?'已在生词本':'加入生词本')+'</button>';
+    }else{
+      card.innerHTML='<b>'+esc(r[0])+'</b> '+(r[2]?'<span class="sub2">/'+esc(r[2])+'/</span>':'')
+        +(String(r[0]).toLowerCase()!==wd.toLowerCase()?'<span class="sub2"> · '+esc(wd)+' 是它的变化形式</span>':'')
+        +'<div>'+esc(r[3]||'')+'</div>'
+        +'<button data-addtk="'+esc(wd)+'" data-tkcn="'+esc(r[3]||'')+'" data-tkex="'+esc(sent)+'"'+(hasWordNote(wd)?' disabled':'')+'>'+(hasWordNote(wd)?'已在生词本':'加入生词本')+'</button>';
+    }
+    if(box&&box.parentNode)box.parentNode.insertBefore(card,box.nextSibling);
+    else tk.parentNode.appendChild(card);
+  });
 }
 
 /* ---------- 词汇 ---------- */
@@ -725,10 +825,10 @@ function renderWords(){
   var tb=$('w-table').querySelector('tbody'),h='';
   for(var i=0;i<S.words.length;i++){
     var w=S.words[i];
-    h+='<tr><td style="width:150px"><b>'+esc(w.en)+'</b></td><td>'+esc(w.cn)+'</td><td style="color:var(--txt3);font-size:12px">'+esc(w.ex||'')+(w.excn?'<div class="excn">'+esc(w.excn)+'</div>':'')+'</td>'
+    h+='<tr><td style="width:150px"><b>'+esc(w.en)+'</b></td><td>'+esc(w.cn)+'</td><td style="color:var(--txt3);font-size:12px">'+renderSentence(w.ex)+(w.excn?'<div class="excn">'+esc(w.excn)+'</div>':'')+'</td>'
       +'<td style="width:104px;white-space:nowrap">'+spk(w.en)+' <button data-del="'+w.id+'" class="danger">删</button></td></tr>';
   }
-  tb.innerHTML=h;bindSpeak(tb.parentNode);
+  tb.innerHTML=h;bindSpeak(tb.parentNode);bindTk(tb.parentNode);
   $('w-empty').style.display=S.words.length?'none':'block';
   $('w-count').textContent=S.words.length+' 词';
   var bs=document.querySelectorAll('#w-table button[data-del]');
@@ -761,12 +861,13 @@ function renderWordLib(list){
     for(var j=0;j<S.words.length;j++){if(String(S.words[j].en).toLowerCase()===w.toLowerCase()){has=true;break;}}
     h+='<div class="sent"><div class="en"><b>'+esc(w)+'</b> <span class="pill">'+esc(x[1])+'</span>'
       +(x[2]?' <span style="color:var(--txt3);font-size:12px">/'+esc(x[2])+'/</span>':'')
-      +'<div class="cn">'+esc(x[3]||'')+(x[4]?'<br><span style="font-style:italic">'+esc(x[4])+'</span>':'')+(x[5]?'<br><span class="excn">'+esc(x[5])+'</span>':'')+'</div></div>'
+      +'<div class="cn">'+esc(x[3]||'')+(x[4]?'<br><span style="font-style:italic">'+renderSentence(x[4])+'</span>':'')+(x[5]?'<div class="excn">'+esc(x[5])+'</div>':'')+'</div></div>'
       +spk(w)+'<button style="flex:none" data-wl="'+esc(w)+'" data-cn="'+esc(x[3]||'')+'" data-ex="'+esc(x[4]||'')+'"'
       +(has?' disabled':'')+'>'+(has?'已加入':'加入')+'</button></div>';
   }
   $('wl-list').innerHTML=h;
   bindSpeak($('wl-list'));
+  bindTk($('wl-list'));
   var bs=document.querySelectorAll('#wl-list button[data-wl]');
   for(var k=0;k<bs.length;k++){bs[k].onclick=function(){
     S.words.unshift({id:Date.now(),en:this.dataset.wl,cn:this.dataset.cn,ex:this.dataset.ex});
@@ -788,7 +889,8 @@ $('w-quiz').onclick=function(){
   cur=S.words[Math.floor(Math.random()*S.words.length)];
   $('quiz').style.display='block';
   $('quiz-q').textContent=cur.cn;
-  $('quiz-h').textContent=cur.ex||'';
+  $('quiz-h').innerHTML=renderSentence(cur.ex)||'';
+  bindTk($('quiz'));
   $('quiz-a').value='';$('quiz-r').textContent='';
   $('quiz-a').focus();
 };
@@ -1262,7 +1364,14 @@ var CLOUD_PKEY='wbpk_4iHBYyeUFZEE268twUwZcH_fKo2cYJCD8MEbwear4AUFoBV7nwABFBd';
 var CL={ok:false,c:null,user:null,rowId:null,status:'init',timer:null,busy:false,pending:null};
 function syncTxt(t,cls){var a=$('sync-txt'),b=$('sync-dot');if(a)a.textContent=t;if(b)b.className='dot '+(cls||'');}
 function netMsg(e){var m=(e&&e.message)||String(e||'');if(/fetch|network|timeout|NetworkError|Failed to/i.test(m))return '网络请求失败，连不上服务器';return m.slice(0,80)||'未知错误';}
+var APPURL='https://english-workbench-31545.app.workbuddy.host/';
 function hostOK(){try{return location.hostname==='english-workbench-31545.app.workbuddy.host';}catch(e){return false;}}
+function syncHtml(h,cls){var a=$('sync-txt'),b=$('sync-dot');if(a)a.innerHTML=h;if(b)b.className='dot '+(cls||'');}
+function noSyncHere(why){
+  syncHtml(why+'<button id="go-app" style="margin-left:8px">去正式的同步版</button>','warn');
+  var g=$('go-app');if(g)g.onclick=function(){location.href=APPURL;};
+  var b=$('sync-btn');if(b)b.style.display='none';
+}
 async function ccall(fn){try{return await fn();}catch(e){return {error:{message:netMsg(e)}};}}
 function sdkFail(){CL.status='bad';syncTxt('同步不可用：连不上云，数据仅存本机','');var b=$('sync-btn');if(b)b.style.display='none';}
 function bootCloud(){
@@ -1283,6 +1392,7 @@ function cloudInit(){
   catch(e){CL.status='nosdk';syncTxt('同步不可用，数据仅存本机','');return false;}
 }
 async function cloudBoot(){
+  if(!hostOK()){noSyncHere('这是离线备份版，不能登录同步。');return;}
   if(!cloudInit())return;
   try{
     var r=await CL.c.auth.getSession();
@@ -1337,7 +1447,7 @@ async function cloudPush(){
 function cloudKick(){if(CL.status!=='on')return;clearTimeout(CL.timer);CL.timer=setTimeout(cloudPush,2000);}
 function mmsg(id,t){var e=$(id);if(e)e.textContent=t;}
 function openAuth(){
-  if(!hostOK()){syncTxt('这个网址不能同步，请用应用网址打开','warn');return;}
+  if(!hostOK()){noSyncHere('这个网址不能登录，');return;}
   $('auth-mask').style.display='flex';
 }
 function closeAuth(){$('auth-mask').style.display='none';}
